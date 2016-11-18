@@ -5,7 +5,15 @@
 #include "dir.h"
 #include "tx.h"
 
-// S.J. reads the directory entry in a directory inode dir.
+#define KLEE
+
+#ifdef KLEE
+#include "klee/klee.h"
+#endif
+
+int namelen;
+
+// reads the directory entry in a directory inode dir.
 // updates the inode offset to point to the next directory entry
 // in the inode.
 
@@ -306,23 +314,29 @@ static int testfs_create_file_or_dir(struct super_block *sb, struct context *c, 
 	int ret;
 	struct inode *in;
 	int inode_nr;
-	char *name_to_create = name;
+	char *name_to_create = name;	// KLEE - need to keep track of name_to_create
 	int current_inode;
+
+	int sym_namelen = strlen(name);
+	int const_namelen = strlen(name);
+
+	klee_make_symbolic(&sym_namelen,sizeof(sym_namelen) , "namelen");
 
 	if(name != NULL) {
 		if(!strcmp(name, "/"))
 			return -EEXIST;
 
 		/* Search for the first occurrence of '/', starting from the end of the specified name. */
-		for(name_offset = strlen(name) - 1; name_offset >= 0; --name_offset)
-			if(name[name_offset] == '/')
+		for(name_offset = const_namelen - 1; name_offset >= 0; --name_offset)	// KLEE - generate
+			if(name[name_offset] == '/')			// only different name_offset values
 				break;
 
-		if(name_offset >= 0) {
+		if(name_offset >= 0) {		// KLEE - check for name_offset > 0 and less than 0.
 			/* In case the specified path is an absolute path to a file or directory
 			 * inside the root directory, increase the offset by 1, in order to set
 			 * the path variable equal to "/". */
-			if(name_offset == 0)
+			if(name_offset == 0)	// KLEE - check for name_offset ==0, and name_offset !=0
+						// KLEE - can optimise since path already has constraint
 				++name_offset;
 
 			/* The specified path represents either an absolute or a relative path. */
@@ -332,25 +346,26 @@ static int testfs_create_file_or_dir(struct super_block *sb, struct context *c, 
 
 			/* Copy the path until the last occurrence of '/', store the current inode
 			 * number and finally, change directory. */
-			strncpy(path, name, name_offset);
+			strncpy(path, name, name_offset);	// KLEE- keep track of path
 			path[name_offset] = '\0';
 
 			current_inode = testfs_inode_get_nr(c->cur_dir);
-			c->cmd[1] = path;
-			ret = cmd_cd(sb, c);
-			free(path);
+			c->cmd[1] = path;		// KLEE - keep track of c->cmd[1]
+			ret = cmd_cd(sb, c);		// KLEE*** - check for cmd_cd() call
+			free(path);			// KLEE - remove c->cmd[] tracking
 
 			if(ret < 0)
 				return ret;
 
 			/* Update the offset to the start of the new name. */
-			name_to_create = name + name_offset + 1;
+			name_to_create = name + name_offset + 1;	// KLEE - update name_to_create
 		}
 	}
 
 	/* Make sure that the specified name does not exceed the size of one block. */
-	if(name_to_create != NULL)
-		if(strlen(name_to_create) + 1 > BLOCK_SIZE - sizeof(struct dirent))
+	if(name_to_create != NULL)				// KLEE - TODO -generate name such that both
+								// name_to_create != and == NULL are tested
+		if(namelen + 1 > BLOCK_SIZE - sizeof(struct dirent))	// KLEE GENERATE different namelens
 			return -EINVAL;
 
 	testfs_tx_start(sb, TX_CREATE);
@@ -384,7 +399,7 @@ static int testfs_create_file_or_dir(struct super_block *sb, struct context *c, 
 	/* then add directory entry */
 	// inode_nr is the number of the newly created inode
 	// dir - name of parent directory. name- name of new file/directory
-	if (c) {
+	if (c) {	// KLEE*** - check for name_to_create
 		if ((ret = testfs_add_dirent(c->cur_dir, name_to_create, inode_nr)) < 0)
 			goto out;
 		testfs_sync_inode(c->cur_dir);
@@ -394,7 +409,7 @@ static int testfs_create_file_or_dir(struct super_block *sb, struct context *c, 
 	testfs_tx_commit(sb, TX_CREATE);
 
 	/* Restore the current directory to its previous path, before the invocation of this function. */
-	if(name != NULL && name_offset > 0) {
+	if(name != NULL && name_offset > 0) {	// KLEE - generate different name_offset lengths
 		testfs_put_inode(c->cur_dir);
 		c->cur_dir = testfs_get_inode(sb, current_inode);
 	}
@@ -405,7 +420,7 @@ static int testfs_create_file_or_dir(struct super_block *sb, struct context *c, 
 	fail: testfs_tx_commit(sb, TX_CREATE);
 
 	/* Restore the current directory to its previous path, before the invocation of this function. */
-	if(name != NULL && name_offset > 0) {
+	if(name != NULL && name_offset > 0) {	// KLEE - generate different name_offset lengths
 		testfs_put_inode(c->cur_dir);
 		c->cur_dir = testfs_get_inode(sb, current_inode);
 	}
@@ -447,7 +462,7 @@ int testfs_dir_name_to_inode_nr_rec(struct super_block *sb, struct inode **dir, 
 	int name_offset = -1;
 	int ret = -ENOENT;
 	char *entry_name;
-	char *name_to_search = name;
+	char *name_to_search = name;	// KLEE track name_to_search
 
 	assert(*dir);
 	assert(name);
@@ -459,27 +474,27 @@ int testfs_dir_name_to_inode_nr_rec(struct super_block *sb, struct inode **dir, 
 	}
 	else {
 		/* Search if the contains a path. */
-		for(i = 0; i < strlen(name); ++i) {
+		for(i = 0; i < strlen(name); ++i) {	// KLEE generate 2 states
 			if(name[i] == '/') {
-				name_offset = i;
+				name_offset = i;	// KLEE name_offset symbolic
 				break;
 			}
 		}
 
-		if(name_offset == 0) {
+		if(name_offset == 0) {			// KLEE generate 2 name_offsets
 			/* The specified path is absolute. After fetching the inode associated
 			 * with the root directory, the function proceeds recursively. */
 			p_in = testfs_get_inode(sb, 0);
 			testfs_put_inode(*dir);
 			(*dir) = p_in;
 
-			return testfs_dir_name_to_inode_nr_rec(sb, dir, name + 1);
+			return testfs_dir_name_to_inode_nr_rec(sb, dir, name + 1); // KLEE track name+1
 		}
-		else if(name_offset == (strlen(name) - 1))
+		else if(name_offset == (strlen(name) - 1))	// KLEE track name_offset
 			/* No entry name is terminated with the '/' character. */
 			return ret;
 		else {
-			if(name_offset != -1) {
+			if(name_offset != -1) {	// KLEE track name_offsets
 				/* The specified name represents a relative path; thus, the name of the
 				 * first entry must be extracted. Otherwise, by default, the name to search
 				 * for is equal to the specified name. */
@@ -487,19 +502,20 @@ int testfs_dir_name_to_inode_nr_rec(struct super_block *sb, struct inode **dir, 
 				if (!entry_name)
 					return -ENOMEM;
 
-				strncpy(entry_name, name, name_offset);
+				strncpy(entry_name, name, name_offset);	// KLEE track entry_name
 				entry_name[name_offset] = '\0';
-				name_to_search = entry_name;
+				name_to_search = entry_name;	// KLEE track name_to_search
 			}
 
 			for (; ret < 0 && (d = testfs_next_dirent(*dir, &offset)); free(d)) {
 				if ((d->d_inode_nr < 0) || (strcmp(D_NAME(d), name_to_search) != 0))
+					// KLEE TODO name compare 
 					continue;
 
 				ret = d->d_inode_nr;
 			}
 
-			if(name_offset != -1) {
+			if(name_offset != -1) {	// KLEE check
 				/* The specified name represents a relative path; the function continues
 				 * its recursion. */
 				if(ret < 0)
@@ -511,7 +527,8 @@ int testfs_dir_name_to_inode_nr_rec(struct super_block *sb, struct inode **dir, 
 				(*dir) = p_in;
 
 				free(name_to_search);
-				return testfs_dir_name_to_inode_nr_rec(sb, dir, name + name_offset + 1);
+				return testfs_dir_name_to_inode_nr_rec(sb, dir, name + name_offset + 1); // KLEE
+							//check name + name_offset + 1
 			}
 			else {
 				/* The specified name does not contain any paths. */
@@ -534,7 +551,7 @@ int testfs_dir_name_to_inode_nr(struct super_block *sb, struct inode **dir, char
 	if(name[strlen(name) - 1] == '/' && strcmp(name, "/"))
 		return -EINVAL;
 
-	ret = testfs_dir_name_to_inode_nr_rec(sb, dir, name);
+	ret = testfs_dir_name_to_inode_nr_rec(sb, dir, name);	// KLEE*** continue exploring name
 	if(testfs_inode_get_nr(*dir) != current_inode_number) {
 		testfs_put_inode(*dir);
 		(*dir) = testfs_get_inode(sb, current_inode_number);
@@ -556,6 +573,7 @@ int cmd_cd(struct super_block *sb, struct context *c)
 		return -EINVAL;
 
 	// get destination directories inode number
+	// KLEE*** - check function call
 	inode_nr = testfs_dir_name_to_inode_nr(sb, &c->cur_dir, c->cmd[1]);
 	if (inode_nr < 0)
 		return inode_nr;
@@ -773,5 +791,7 @@ int cmd_mkdir(struct super_block *sb, struct context *c)
 	if (c->nargs != 2) {
 		return -EINVAL;
 	}
+//	char *command = c->cmd[1];
+//	klee_make_symbolic(&command[0], sizeof(char) , "command");
 	return testfs_create_file_or_dir(sb, c, I_DIR, c->cmd[1]);
 }

@@ -20,9 +20,13 @@
 #include "dir.h"
 #include "tx.h"
 
+#define KLEE
+
 #ifdef KLEE
-#include <klee/klee.h>
+#include "klee/klee.h"
 #endif
+
+
 
 static int cmd_help(struct super_block *, struct context *c);
 static int cmd_quit(struct super_block *, struct context *c);
@@ -126,6 +130,7 @@ static void handle_command(struct super_block *sb, struct context *c,
 	//		for ( k = 1; k < cmdtable[i].max_args ; k++){
 	//			klee_make_symbolic(c->cmd[k], sizeof(c->cmd[k]), "arg");
 	//		}
+			klee_make_symbolic_range(c->cmd[1], 0 , strlen(c->cmd[1]), "arg");
 			errno = cmdtable[i].func(sb, c);
 			if (errno < 0) {
 				errno = -errno;
@@ -147,7 +152,6 @@ struct args {
 	int corrupt;        // to corrupt or not
 };
 
-#ifndef KLEE
 static struct args *
 parse_arguments(int argc, char * const argv[]) {
 	static struct args args = { 0 };
@@ -193,82 +197,8 @@ parse_arguments(int argc, char * const argv[]) {
 	args.disk = argv[optind];
 	return &args;
 }
-#endif
 
 int main(int argc, char * const argv[]) {
-/*
-	struct super_block *sb;
-	#ifndef KLEE
-	int it;
-	#endif
-	int ret;
-	struct context c;
-	// context contains command line arguments/parameters,
-	// inode of directory from which cmd was issued, and no of args.
-
-	//#ifndef KLEE
-	//struct args * args = parse_arguments(argc, argv);
-	//#endif
-	
-//	if(argc < 3){
-//		usage(argv[0]);
-//	}
-
-	// args->disk contains the name of the disk file. 
-	// initializes the in memory structure sb with data that is 
-	// read from the disk. after successful execution, we have 
-	// sb initialized to dsuper_block read from disk.
-//	printf("args->disk = %s, args->corrupt = %d\n", args->disk, args->corrupt);
-	ret = testfs_init_super_block("/tmp/file", 0 , &sb);
-	printf("testfs initialized\n");
-	if (ret) {
-		EXIT("testfs_init_super_block");
-	}
-	// if the inode does not exist in the inode_hash_map (which
-	// is an inmemory map of all inode blocks, create a new inode by
-	// allocating memory to it. read the dinode from disk into that
-	// memory inode
-	// 
-	c.cur_dir = testfs_get_inode(sb, 0); // root dir 
-		char name[50];
-		char arguments[10];
-
-		strcpy(name, argv[1]);
-	
-	printf("testfs_get_inode done\n");
-	//void klee_make_symbolic_range(void* addr, size_t offset, size_t nbytes, const char* name) {
-	#ifdef KLEE
-//		klee_make_symbolic_range(arguments, 10, 10, "filename");
-		klee_make_symbolic(arguments, sizeof arguments, "filename");
-	#else
-		int prev_len = 0;
-		printf("argc = %d, argv = %s\n", argc, argv[1]);
-		for (it = 1; it < argc ; it++){
-			printf("begin loop, it = %d, argc = %d\n", it, argc);
-			strcpy(arguments + prev_len, argv[it]);
-			printf("strcpy done %s\n", arguments);
-			prev_len += strlen(argv[it]);
-			printf("prev len updated = %d\n", prev_len);
-			arguments[prev_len] = ' ';
-			printf("args updated\n");
-			prev_len++; 
-		}
-		arguments[prev_len] = '\0';
-		printf("name = %s, arguments = %s\n", name, arguments);
-	#endif
-		printf("arguments set\n");
-		handle_command(sb, &c, name, arguments);
-		printf("handle_command\n");
-		if (can_quit) {
-			return 1;
-		}
-	// decrement inode count by 1. remove inode from in_memory hash map if
-	// inode count has become 0.
-	testfs_put_inode(c.cur_dir);
-	testfs_close_super_block(sb);
-	return 0;
-*/
-
 	struct super_block *sb;
         char line[1000];
         int ret;
